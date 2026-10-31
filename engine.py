@@ -1,30 +1,47 @@
 import re
 
-from guide import domain, make_plan, shop_links
+from guide import domain, find_item, make_plan
 from models import ask_json
 from safety import (CAUTION_LINE, EMERGENCY_LINE, check_refusal, confirms_caution,
                     is_emergency, needs_caution, norm)
 
 BANNED = re.compile(r"\b(safe|unplugged|de.?energi[sz]ed|no power)\b", re.I)
 MAX_PHOTOS = 6
+ARTICLES = r"(?:any |a |an |the |some |my |more |of |new |replacement for )*"
+SHOPPING_PATTERNS = [
+    rf"\b(?:i )?(?:don't|dont|do not) have {ARTICLES}(?P<item>.*)",
+    rf"\b(?:i'm|im|i am) missing {ARTICLES}(?P<item>.*)",
+    rf"\bi need to (?:buy|but|get|order|find) {ARTICLES}(?P<item>.*)",
+    rf"\bwhere (?:can|could|do|should|would) i (?:find|buy|but|get|order) {ARTICLES}(?P<item>.*)",
+    rf"\b(?:buy|order) {ARTICLES}(?P<item>.*)",
+]
+VAGUE_ITEMS = {"", "this", "it", "that", "these", "those", "them", "one", "this one", "that one", "this part", "this item"}
+ITEM_ENDINGS = r"\b(?:to make|to fix|to finish|to build|for this|for the|for my|from|online|near me|please)\b"
+CONTINUE = r"\b(continue|skip|next|ready|done|okay|ok)\b"
+FIXED = r"\b(it's fixed|its fixed|that fixed it|it worked|that worked|problem solved|all fixed|it's working)\b"
+NOT_FIXED = r"\b(no|nope|not|didn't|didnt|isn't|isnt|still|next|keep going|continue)\b"
+YES_FIXED = r"\b(yes|yeah|yep|fixed|worked|works|working|sorted|solved|clear|draining|stopped)\b"
 
 
 class Session:
     def __init__(self):
+        self.run = 0
         self.reset()
 
     def reset(self):
+        self.run += 1
         self.phase, self.plan, self.step, self.stuck = "idle", None, 0, 0
         self.pending, self.seen, self.product = "", "", ""
         self.photos, self.seen_parts = [], []
+        self.awaiting, self.skipped = False, 0
 
 
 class Engine:
-    def __init__(self, model, planner=make_plan):
-        self.model, self.planner = model, planner
+    def __init__(self, model, planner=make_plan, finder=find_item):
+        self.model, self.planner, self.finder = model, planner, finder
 
-    def view(self, s: Session, say: str, action: str = "") -> dict:
-        step = s.plan["steps"][s.step] if s.phase == "steps" else None
+    def view(self, s: Session, say: str, action: str = "", shopping: dict | None = None) -> dict:
+        step = s.plan["steps"][s.step] if s.plan and s.phase == "steps" else None
         return {
             "say": say,
             "phase": s.phase,
@@ -34,23 +51,65 @@ class Engine:
             "screen": step["say"] if step else say,
             "detail": step["detail"] if step else "",
             "uses": step.get("uses", []) if step else [],
+            "check": step.get("check", "") if step and s.awaiting else "",
+            "can_finish": bool(s.plan and any(item.get("check") for item in s.plan["steps"])),
+            "skipped": s.skipped,
             "seen_parts": s.seen_parts if s.phase == "idle" else [],
             "photo_count": len(s.photos),
+            "product": s.product,
             "items": s.plan["items"] if s.plan and s.phase == "items" else [],
+            "safety": s.plan["safety"] if s.plan and s.phase == "gate" else [],
             "sources": s.plan["sources"] if s.plan else [],
+            "shopping": shopping,
             "action": action,
         }
 
     async def turn(self, s: Session, text: str) -> dict:
         if is_emergency(text, s.phase != "idle"):
             s.phase = "stopped"
+            s.run += 1
             return self.view(s, EMERGENCY_LINE)
         if norm(text) in {"start over", "new task"}:
             s.reset()
             return self.view(s, "Okay. What do you need help with?")
         if s.phase in {"done", "stopped", "ended"}:
             s.reset()
+        if s.phase in {"items", "gate", "steps"}:
+            shopping = await self.shopping_request(s, text)
+            if shopping:
+                return shopping
         return await getattr(self, f"on_{s.phase}")(s, text)
+
+    async def shopping_request(self, s: Session, text: str) -> dict | None:
+        n = norm(text)
+        match = next((m for p in SHOPPING_PATTERNS if (m := re.search(p, n))), None)
+        if not match:
+            return None
+        run = s.run
+        item = re.split(ITEM_ENDINGS, match.group("item"))[0].strip()
+        if item in VAGUE_ITEMS:
+            item = await self.unclear_item(s, text)
+        if not item:
+            return self.view(s, "Which item do you need to find?")
+        found = await self.finder(self.model, item, s.product or s.plan["title"])
+        if s.run != run:
+            return self.view(s, "")
+        if not found:
+            return self.view(s, check_refusal(item) or "I can't help you buy that. Please ask a qualified professional.")
+        count = len(found["options"])
+        return self.view(s, f"I found {count} places for {found['item']}. They're on screen.", shopping=found)
+
+    async def unclear_item(self, s: Session, text: str) -> str:
+        names = [i["name"] for i in s.plan["items"]]
+        if s.phase == "steps":
+            names = s.plan["steps"][s.step].get("uses", []) or names
+        result = await ask_json(self.model, (
+            f"The user said: {text!r}\nItems in this task: {names}\n"
+            "Which single item do they want to buy? Use an empty string if it is unclear.\n"
+            'Reply only with JSON {"item":"..."}.'
+        ))
+        item = norm(str(result.get("item") or ""))
+        return "" if item in VAGUE_ITEMS else item
 
     async def on_idle(self, s: Session, text: str) -> dict:
         if re.search(r"\b(is this it|what is this|look at this|camera)\b", norm(text)):
@@ -71,7 +130,11 @@ class Engine:
         return self.view(s, "Okay, I'll stop here. A repair shop is the safer choice.")
 
     async def build(self, s: Session, request: str) -> dict:
-        s.plan = await self.planner(self.model, request, s.seen, s.photos, s.product)
+        run = s.run
+        plan = await self.planner(self.model, request, s.seen, s.photos, s.product)
+        if s.run != run:
+            return self.view(s, "")
+        s.plan = plan
         if not s.plan:
             s.phase = "ended"
             return self.view(s, "I couldn't build reliable steps for that. Please try again in a minute, or ask it another way.")
@@ -79,22 +142,13 @@ class Engine:
         if not names:
             return self.start_gate(s)
         s.phase = "items"
-        line = f"You'll need {', '.join(names)}." if len(names) <= 5 else f"You'll need {len(names)} things, listed on screen."
-        if any(i["buy"] for i in s.plan["items"]):
-            line += " I've put shop links on screen. Check that anything you buy fits before you order."
-        return self.view(s, f"{line} Say continue when you're ready. You can also tell me a model number for closer links.")
+        line = f"You'll need {', '.join(names)}." if len(names) <= 5 else f"You'll need {len(names)} items, listed on screen."
+        return self.view(s, f"{line} Tell me if you're missing anything, or say continue.")
 
     async def on_items(self, s: Session, text: str) -> dict:
-        n = norm(text)
-        if re.search(r"\b(continue|skip|next|ready|done|okay|ok)\b", n):
+        if re.search(CONTINUE, norm(text)):
             return self.start_gate(s)
-        if n in {"repeat", "stuck", "back", "camera"}:
-            return self.view(s, "Say continue when you're ready, or tell me a model number.")
-        device = re.sub(r"[^\w\s\-./]", "", text)[:60].strip()
-        for item in s.plan["items"]:
-            if item["buy"]:
-                item["links"] = shop_links(f"{device} {item['name']}")
-        return self.view(s, f"I've updated the links for {device}. Say continue when you're ready.")
+        return self.view(s, "Tell me if you're missing anything, or say continue.")
 
     def start_gate(self, s: Session) -> dict:
         s.phase = "gate"
@@ -108,11 +162,30 @@ class Engine:
         return self.view(s, f"I'll wait. {' '.join(s.plan['safety'])} Say ready to begin.")
 
     def speak_step(self, s: Session) -> dict:
-        s.stuck = 0
+        s.stuck, s.awaiting = 0, False
         return self.view(s, s.plan["steps"][s.step]["say"])
+
+    def finish_early(self, s: Session) -> dict:
+        s.skipped = len(s.plan["steps"]) - s.step - 1
+        s.awaiting, s.phase = False, "done"
+        return self.view(s, "Great, that fixed it. You can skip the remaining steps.")
+
+    def on_check(self, s: Session, n: str) -> dict:
+        if re.search(r"\bback\b", n):
+            return self.speak_step(s)
+        if re.search(NOT_FIXED, n):
+            s.step += 1
+            return self.speak_step(s)
+        if re.search(YES_FIXED, n):
+            return self.finish_early(s)
+        return self.view(s, f"{s.plan['steps'][s.step]['check']} Say yes or no.")
 
     async def on_steps(self, s: Session, text: str) -> dict:
         n = norm(text)
+        if s.awaiting:
+            return self.on_check(s, n)
+        if re.search(FIXED, n) and not re.search(r"\b(not|isn't|didn't|hasn't)\b", n):
+            return self.finish_early(s)
         if re.search(r"\b(is this it|is this right|what is this|check this|camera)\b", n):
             return self.view(s, "Hold it in view. Taking a photo in three seconds.", "camera")
         if re.search(r"\b(not done|not okay|don't understand|stuck|help)\b", n):
@@ -123,6 +196,9 @@ class Engine:
             s.step = max(0, s.step - 1)
             return self.speak_step(s)
         if re.search(r"\b(next|done|okay|ok)\b", n):
+            if s.plan["steps"][s.step].get("check"):
+                s.awaiting = True
+                return self.view(s, s.plan["steps"][s.step]["check"])
             if s.step == len(s.plan["steps"]) - 1:
                 s.phase = "done"
                 return self.view(s, "That's the last step. Nice work.")
@@ -148,6 +224,7 @@ class Engine:
             s.reset()
         if s.phase != "idle":
             return self.view(s, "Finish this part first, or say start over to add new photos.")
+        run = s.run
         photos = (s.photos + images)[-MAX_PHOTOS:]
         result = await ask_json(self.model, (
             "These photos show a user's task, such as furniture parts, fittings, a broken item, or instruction pages.\n"
@@ -157,6 +234,8 @@ class Engine:
             'Reply only with JSON {"product":"name or empty","problem":"short or empty",'
             '"has_instructions":false,"parts":[{"name":"...","count":"4","looks_like":"short description"}]}.'
         ), photos)
+        if s.run != run:
+            return self.view(s, "")
         parts = [
             {
                 "name": str(p.get("name"))[:60],
