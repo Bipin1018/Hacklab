@@ -34,8 +34,19 @@ html,body { height:100%; margin:0; overflow:hidden; background:var(--bg); }
 .rail-in { width:100%; max-width:720px; margin:0 auto; display:flex; align-items:center; gap:var(--s3); padding:var(--s2) var(--s4); }
 .credit { flex:1 1 auto; min-width:0; color:var(--muted); font-size:13px; text-align:center; }
 
-.voice { display:inline-flex; align-items:center; gap:var(--s2); min-height:32px; padding:0 var(--s3); border-radius:var(--r-full); background:var(--card); color:var(--muted); font-size:14px; font-weight:600; white-space:nowrap; }
+.voice { appearance:none; position:relative; display:inline-flex; align-items:center; gap:var(--s2); min-height:32px; padding:0 var(--s3); border:0; border-radius:var(--r-full); background:var(--card); color:var(--muted); font:600 14px/1 var(--font); white-space:nowrap; }
+.voice::after { content:""; position:absolute; inset:-8px 0; }
+.voice--speaking { cursor:pointer; }
+.voice:focus-visible { outline:3px solid var(--text); outline-offset:2px; }
 .voice b { font-weight:600; color:var(--text); }
+.hud { flex:none; display:flex; align-items:center; gap:var(--s3); width:100%; max-width:720px; margin:0 auto; padding:0 var(--s4) var(--s2); }
+.caption { flex:1 1 auto; min-width:0; font-size:15px; line-height:1.35; }
+.caption-you { color:var(--muted); overflow-wrap:anywhere; }
+.caption-say { color:var(--text); overflow-wrap:anywhere; }
+.timer { appearance:none; flex:none; display:inline-flex; align-items:center; gap:var(--s2); min-height:var(--tap); margin-left:auto; padding:0 var(--s3); border:0; border-radius:var(--r-full); background:var(--mint-soft); color:var(--mint); font:700 15px/1 var(--font); font-variant-numeric:tabular-nums; cursor:pointer; }
+.timer:focus-visible { outline:3px solid var(--text); outline-offset:2px; }
+.trust { display:flex; align-items:center; gap:var(--s2); margin-top:var(--s2); color:var(--muted); font-size:14px; }
+.trust svg { flex:none; }
 .bars { display:inline-flex; align-items:center; gap:2px; height:14px; }
 .bars i { display:block; width:3px; height:4px; border-radius:2px; background:var(--muted); }
 .voice--listening .bars i { background:var(--mint); animation:bar 1.5s ease-in-out infinite; }
@@ -82,6 +93,7 @@ html,body { height:100%; margin:0; overflow:hidden; background:var(--bg); }
 .hero { display:flex; flex-direction:column; align-items:center; text-align:center; padding-top:var(--s6); }
 .orb { position:relative; display:grid; place-items:center; width:168px; height:168px; margin:var(--s4) 0 var(--s6); }
 .orb-core { position:relative; z-index:2; display:grid; place-items:center; width:112px; height:112px; border-radius:50%; background:var(--mint); color:var(--on-mint); box-shadow:0 0 44px rgba(94,235,181,.34); }
+.orb--speaking .orb-core { transform:scale(calc(1 + var(--level,0) * .22)); }
 .orb-ring { position:absolute; inset:28px; border-radius:50%; border:2px solid var(--mint); opacity:0; }
 .orb--idle .orb-core { box-shadow:0 0 34px rgba(94,235,181,.24); }
 .orb--listening .orb-core { animation:orbPulse 2.4s ease-in-out infinite; }
@@ -235,12 +247,23 @@ details[open] summary svg { transform:rotate(180deg); }
   <header class="topbar">
     <span class="brand">Korjaa</span>
     <span class="grow"></span>
-    <span id="voice" class="voice voice--idle" role="status" aria-live="polite">
+    <button id="voice" class="voice voice--idle">
       <span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>
-      <b id="voiceLabel">Ready</b>
-    </span>
+      <b id="voiceLabel" role="status" aria-live="polite">Ready</b>
+    </button>
     <button id="newTask" class="btn btn--quiet" hidden>New task</button>
   </header>
+
+  <div id="hud" class="hud" hidden>
+    <div class="caption" aria-live="polite">
+      <div id="captionYou" class="caption-you"></div>
+      <div id="captionSay" class="caption-say"></div>
+    </div>
+    <button id="timer" class="timer" aria-label="Cancel timer" hidden>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13" r="8"></circle><path d="M12 9v4l2.5 2M9 2.5h6"></path></svg>
+      <span id="timerText"></span>
+    </button>
+  </div>
 
   <div class="main-wrap">
     <div id="toast" class="toast" role="alert" hidden>
@@ -269,9 +292,10 @@ details[open] summary svg { transform:rotate(180deg); }
               <h1 class="h2">Your photos</h1>
               <span id="photoCount" class="progress-line">0 of 6</span>
             </div>
-            <p class="hint">Show me the parts laid out. Clear, close shots work best.</p>
+            <p class="hint">Show me anything: a machine, a label, an error code, a broken part. Clear, close shots work best.</p>
           </div>
           <div id="photoGrid" class="photos"></div>
+          <div id="seenWrap" class="stuck enter" style="margin:0" hidden><strong>What I can see</strong><span id="seenText"></span></div>
           <div id="partsWrap" class="stack enter" hidden>
             <h2 class="eyebrow" style="margin:0">Parts I can see</h2>
             <div id="parts" class="stack"></div>
@@ -319,6 +343,7 @@ details[open] summary svg { transform:rotate(180deg); }
             <p class="hint">Check each one, then tell me you're ready.</p>
           </div>
           <div id="gatePoints" class="stack"></div>
+          <div class="trust trustLine"></div>
           <p class="small" style="margin:0">AI steps can be wrong, so use your own judgement. Press STOP at any time.</p>
         </section>
 
@@ -334,6 +359,7 @@ details[open] summary svg { transform:rotate(180deg); }
             </span>
           </div>
           <div class="meter" aria-hidden="true"><i id="stepMeter"></i></div>
+          <div class="trust trustLine"></div>
           <article id="stepCard" class="stepcard">
             <p id="say" class="say" aria-live="polite"></p>
             <div id="uses" class="uses" aria-label="Use these"></div>
@@ -361,7 +387,7 @@ details[open] summary svg { transform:rotate(180deg); }
 
         <section id="s-done" class="hero enter" hidden>
           <div class="seal" aria-hidden="true"><svg width="62" height="62" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.6 4.6L19 7.6"></path></svg></div>
-          <h1 class="h1">All done</h1>
+          <h1 id="doneTitle" class="h1">All done</h1>
           <p id="doneText" class="hint"></p>
         </section>
 
@@ -437,6 +463,7 @@ details[open] summary svg { transform:rotate(180deg); }
           <span class="vf-corner vf-tl"></span><span class="vf-corner vf-tr"></span><span class="vf-corner vf-bl"></span><span class="vf-corner vf-br"></span>
           <span id="camCount" class="vf-count" aria-live="polite"></span>
         </div>
+        <button id="camFile" class="btn btn--line">Choose a picture instead</button>
         <div id="camResultWrap" hidden>
           <div class="stuck enter" style="margin:0 0 12px" aria-live="polite"><strong>What I can see</strong><span id="camResult"></span></div>
           <button id="camBack" class="btn btn--main">Back to where I was</button>
@@ -467,6 +494,7 @@ details[open] summary svg { transform:rotate(180deg); }
 </div>
 
 <input id="photos" type="file" accept="image/*" multiple hidden>
+<input id="checkPhoto" type="file" accept="image/*" hidden>
 <canvas id="canvas" hidden></canvas>
 
 <script>
@@ -476,7 +504,16 @@ const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const LABELS = { idle:"Ready", listening:"Listening", thinking:"Working on it", speaking:"Speaking", error:"Problem" };
 const SCREENS = ["start", "ready", "photos", "thinking", "caution", "items", "gate", "steps", "done", "stopped", "ended"];
 const DOCKS = { start:"start", ready:"ready", photos:"photos", caution:"caution", items:"items", gate:"gate", steps:"steps", done:"over", stopped:"over", ended:"over" };
-const CHIPS = [["Assemble a bookcase", "Assemble a bookcase"], ["Fix a wobbly chair", "Fix a wobbly chair"], ["Make a cheese and tomato sandwich", "Make a sandwich with bread, cheese and tomato"]];
+const CHIPS = [["Washing machine won't drain", "My washing machine won't drain"], ["Assemble a bookcase", "Assemble a bookcase"], ["Microwave won't heat", "My microwave won't heat"]];
+// Korjaa is often misheard, so the wake word accepts the usual transcriptions.
+const WAKE = /^(?:(?:hey|ok|okay|hi)\s+)?(?:korjaa|korja|koria|korea|correa|kordia|corea)\b[\s,.!?]*/i;
+const HAZARD = /\b(stop|smoke|smoking|fire|burning|sparks?|sparking|shock|shocked|gas)\b/i;
+const BUYING = /\b(?:(?:don't|do not) have (?!to\b|time\b)|(?:i'm|i am) missing |need to (?:buy|order) |where (?:can|could|do|should) i (?:buy|order)\b|where (?:can|could) i (?:find|get) (?:a |an |some )?(?:replacement|new|spare)\b|\b(?:buy|purchase) )/i;
+const VOICE_QUESTION =/^(what|what's|how|why|where|when|which|who|can|could|should|is|are|do|does|did|will|would|am)\b/i;
+const SHORT_COMMAND = /\b(next|back|repeat|again|stuck|help|continue|ready|wait|hold on|pause|quiet|yes|no|done|check this|camera|take a look|timer)\b/i;
+// Phones share the mic with the speaker badly, so talking over Korjaa is desktop only there. Tap the voice pill instead.
+const BARGE_IN = !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const TICK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.6 4.6L19 7.6"></path></svg>';
 const THINKING = ["Finding instructions", "Checking safety advice", "Writing your steps"];
 const PHOTO_THINKING = ["Reading your photos", "Finding the parts", "Counting what I can see"];
 const ORB = '<span class="orb-ring"></span><span class="orb-ring"></span><span class="orb-ring"></span><span class="orb-core"><svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"></path></svg></span>';
@@ -486,6 +523,7 @@ let started = false, listening = false, speaking = false, busy = false, phase = 
 let requestId = 0, speechId = 0, camRun = 0, lastStep = 0, flip = false, last = null, lastCommand = "";
 let thinkTimer = null, toastTimer = null, sheetMode = "", shopLoading = false;
 let thumbnails = [], pendingThumbs = [], ticked = new Set(), planKey = "";
+let spoken = "", spokenAt = 0, analyser = null, levelFrame = 0, timerEnd = 0, timerTick = null, thinkDelay = null, ackDelay = null;
 
 function make(tag, className, text) {
   const node = document.createElement(tag);
@@ -494,9 +532,21 @@ function make(tag, className, text) {
   return node;
 }
 
+function syncHud() {
+  $("hud").hidden = !$("captionYou").textContent && !$("captionSay").textContent && $("timer").hidden;
+}
+
+function caption(you, say) {
+  if (you !== undefined) $("captionYou").textContent = you ? `You: ${you}` : "";
+  if (say !== undefined) $("captionSay").textContent = say;
+  syncHud();
+}
+
 function setVoice(state) {
   $("voice").className = `voice voice--${state}`;
   $("voiceLabel").textContent = LABELS[state];
+  if (state === "speaking") $("voice").setAttribute("aria-label", "Speaking. Press to stop talking");
+  else $("voice").removeAttribute("aria-label");
   document.querySelectorAll(".orb:not(.orb--fixed)").forEach(orb => { orb.className = `orb orb--${state}`; });
 }
 
@@ -548,17 +598,26 @@ async function request(url, body, messages) {
   const id = ++requestId;
   busy = true;
   setVoice("thinking");
-  if (messages) startThinking(messages);
+  clearTimeout(thinkDelay);
+  clearTimeout(ackDelay);
+  // Instant replies never flash the thinking screen or get an acknowledgement.
+  if (messages) thinkDelay = setTimeout(() => startThinking(messages), 350);
+  if (url === "/api/turn" && !["stop", "start over"].includes(body.text)) ackDelay = setTimeout(() => speak("On it."), 700);
   try {
     const result = await (await post(url, body)).json();
     if (id !== requestId) return;
+    clearTimeout(thinkDelay);
+    clearTimeout(ackDelay);
     busy = false;
     last = result;
     paint(result);
+    if (result.action === "timer") setTimer(result.timer);
     await speak(result.say);
     if (result.action === "camera") await capture();
   } catch {
     if (id !== requestId) return;
+    clearTimeout(thinkDelay);
+    clearTimeout(ackDelay);
     busy = false;
     closeSheet();
     pendingThumbs = [];
@@ -570,10 +629,12 @@ async function request(url, body, messages) {
 }
 
 function send(text) {
-  const urgent = ["stop", "start over"].includes(text);
+  const urgent = text === "start over" || HAZARD.test(text);
   if (busy && !urgent) return showToast("One moment, I'm still working on that.");
+  silence();
   lastCommand = text.toLowerCase();
-  const longTask = !urgent && text !== "camera" && ["idle", "caution", "done", "stopped", "ended"].includes(phase);
+  if (!shopLoading && ["items", "gate", "steps"].includes(phase) && BUYING.test(text)) showShopLoading("Finding it");
+  const longTask =!["stop", "start over", "camera"].includes(text) && ["idle", "caution", "done", "stopped", "ended"].includes(phase);
   return request("/api/turn", { session_id:sessionId, text }, longTask ? THINKING : null);
 }
 
@@ -586,6 +647,7 @@ function syncThumbs(r) {
 }
 
 function paint(r) {
+  const samePhase = r.phase === phase;
   phase = r.phase;
   syncThumbs(r);
   if (r.say === "Which item do you need to find?") {
@@ -597,6 +659,15 @@ function paint(r) {
   }
   if (r.shopping) renderShop(r.shopping, r.say);
   else if (sheetMode === "shop" && shopLoading) closeSheet();
+  // A new screen already shows its own words, so only replies within a screen get a caption.
+  caption(undefined, samePhase && ["idle", "items", "gate"].includes(r.phase) && !r.shopping ? r.say : "");
+  if (["stopped", "ended", "done"].includes(r.phase)) caption("");
+  // A timer must never speak up after an emergency stop.
+  if (["stopped", "ended"].includes(r.phase)) setTimer(0);
+  document.querySelectorAll(".trustLine").forEach(node => {
+    if (r.saved) node.innerHTML = `${TICK}Saved guide`;
+    else node.textContent = "Built from web sources. Check them.";
+  });
   ({ idle:paintIdle, caution:paintCaution, items:paintItems, gate:paintGate, steps:paintSteps, done:paintDone, stopped:paintStopped }[r.phase] || paintEnded)(r);
   updateWakeLock();
 }
@@ -614,6 +685,9 @@ function paintPhotos(r) {
   $("photoCount").textContent = `${count} of 6`;
   $("findSteps").disabled = count === 0;
   $("findSteps").dataset.product = r.product || "the items in my photos";
+  const seen = [r.subject, r.problem && `Problem: ${r.problem}`].filter(Boolean).join(". ");
+  $("seenWrap").hidden = !seen;
+  $("seenText").textContent = seen;
   const tiles = thumbnails.map((src, index) => {
     const tile = make("div", "photo");
     const image = new Image();
@@ -642,7 +716,7 @@ function paintPhotos(r) {
 
 function paintCaution(r) {
   showScreen("caution");
-  const lines = r.say.match(/[^.]+\./g) || [r.say];
+  const lines = r.caution.match(/[^.]+\./g) || [r.caution];
   $("cautionList").replaceChildren(...lines.map(line => make("li", "", line.trim())));
 }
 
@@ -733,7 +807,10 @@ function paintDone(r) {
   lastStep = 0;
   showScreen("done");
   const skipped = r.skipped === 1 ? "1 step" : `${r.skipped} steps`;
-  $("doneText").textContent = r.skipped ? `${r.title}. Fixed early, so you skipped ${skipped}.` : `${r.title}. Nicely finished.`;
+  const repair = r.can_finish || /\b(fix|repair|unclog|won't|drain|broken|leak)/i.test(r.title);
+  $("doneTitle").textContent = repair ? "Repaired, not replaced" : "All done";
+  const outcome = r.skipped ? `Fixed early, so you skipped ${skipped}.` : repair ? "One appliance kept out of the bin." : "Nicely finished.";
+  $("doneText").textContent = `${r.title}. ${outcome}`;
 }
 
 function paintStopped(r) {
@@ -746,8 +823,7 @@ function paintEnded(r) {
   lastStep = 0;
   showScreen("ended");
   const declined = r.say.startsWith("Okay, I'll stop");
-  const failed = r.say.startsWith("I couldn't build");
-  $("endTitle").textContent = declined ? "Good call" : failed ? "I couldn't build this one" : "I can't guide this one";
+  $("endTitle").textContent = declined ? "Good call" : "I can't guide this one";
   $("endText").textContent = r.say;
 }
 
@@ -783,11 +859,15 @@ function skeletonCard() {
   return card;
 }
 
+function showShopLoading(title) {
+  shopLoading = true;
+  openSheet("shop", title, "Searching shops…");
+  $("sheetBody").replaceChildren(skeletonCard(), skeletonCard());
+}
+
 function shopFor(name) {
   if (busy) return showToast("One moment, I'm still working on that.");
-  shopLoading = true;
-  openSheet("shop", name, "Searching shops…");
-  $("sheetBody").replaceChildren(skeletonCard(), skeletonCard());
+  showShopLoading(name);
   send(`I need to buy ${name}`);
 }
 
@@ -834,7 +914,8 @@ async function speak(text) {
   try { source?.stop(); } catch {}
   speechSynthesis.cancel();
   speaking = true;
-  if (recognition) try { recognition.stop(); } catch {}
+  spoken = text.toLowerCase();
+  if (recognition && !BARGE_IN) try { recognition.stop(); } catch {}
   setVoice("speaking");
   try {
     const response = await post("/api/tts", { text });
@@ -843,9 +924,15 @@ async function speak(text) {
     await new Promise(resolve => {
       source = audioCtx.createBufferSource();
       source.buffer = audio;
-      source.connect(audioCtx.destination);
+      if (!analyser) {
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.connect(audioCtx.destination);
+      }
+      source.connect(analyser);
       source.onended = resolve;
       source.start();
+      followLevel();
     });
   } catch {
     if (id !== speechId) return;
@@ -857,14 +944,31 @@ async function speak(text) {
   }
   if (id !== speechId) return;
   speaking = false;
+  spokenAt = Date.now();
   startListening();
+}
+
+// The orb moves with the real voice output rather than a looped animation.
+function followLevel() {
+  cancelAnimationFrame(levelFrame);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  const app = document.querySelector(".app");
+  const tick = () => {
+    if (!speaking) return app.style.setProperty("--level", 0);
+    analyser.getByteFrequencyData(data);
+    app.style.setProperty("--level", (data.reduce((sum, value) => sum + value, 0) / data.length / 110).toFixed(3));
+    levelFrame = requestAnimationFrame(tick);
+  };
+  tick();
 }
 
 function silence() {
   speechId++;
   try { source?.stop(); } catch {}
   speechSynthesis.cancel();
+  if (speaking) spokenAt = Date.now();
   speaking = false;
+  startListening();
 }
 
 function startListening() {
@@ -873,15 +977,77 @@ function startListening() {
   restVoice();
 }
 
+function isEcho(text) {
+  if (!speaking && Date.now() - spokenAt > 1500) return false;
+  const words = text.toLowerCase().replace(/[^a-z0-9' ]/g, "").split(/\s+/).filter(Boolean);
+  const hits = words.filter(word => spoken.includes(word)).length;
+  return words.length > 0 && hits / words.length >= 0.6;
+}
+
+// Decides what the room said is meant for Korjaa. Hazard words always get through.
+function heard(raw) {
+  const woke = WAKE.test(raw.trim());
+  const text = raw.trim().replace(WAKE, "").trim();
+  if (woke && !text) {
+    silence();
+    return speak("Yes?");
+  }
+  const hazard = HAZARD.test(text);
+  if (!text || (!hazard && !woke && isEcho(text))) return;
+  const words = text.split(/\s+/).length;
+  const guided = ["steps", "gate", "items", "caution"].includes(phase);
+  if (!hazard && !woke) {
+    if (speaking && !(words <= 6 && SHORT_COMMAND.test(text))) return;
+    if (guided && words > 6 && (!VOICE_QUESTION.test(text) || words > 16)) return;
+  }
+  caption(text);
+  send(text);
+}
+
+function setTimer(seconds) {
+  clearInterval(timerTick);
+  timerEnd = seconds > 0 ? Date.now() + seconds * 1000 : 0;
+  $("timer").hidden = !timerEnd;
+  syncHud();
+  if (!timerEnd) return;
+  const total = seconds;
+  const paintTimer = () => {
+    const left = Math.max(0, Math.ceil((timerEnd - Date.now()) / 1000));
+    $("timerText").textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+    if (left > 0) return;
+    setTimer(0);
+    chime();
+    const label = total >= 120 ? `${Math.round(total / 60)} minute` : total >= 60 ? "1 minute" : `${total} second`;
+    speak(`Your ${label} timer is done.`);
+  };
+  paintTimer();
+  timerTick = setInterval(paintTimer, 500);
+}
+
+function chime() {
+  if (!audioCtx) return;
+  const tone = audioCtx.createOscillator(), gain = audioCtx.createGain();
+  tone.frequency.value = 880;
+  gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+  tone.connect(gain).connect(audioCtx.destination);
+  tone.start();
+  tone.stop(audioCtx.currentTime + 0.5);
+}
+
 function setupVoice() {
   if (!Recognition) return;
   recognition = new Recognition();
   recognition.lang = "en-US";
   recognition.continuous = true;
-  recognition.interimResults = false;
+  recognition.interimResults = true;
   recognition.onresult = event => {
-    const text = event.results[event.results.length - 1][0].transcript.trim();
-    if (text && !speaking) send(text);
+    for (let index = event.resultIndex; index < event.results.length; index++) {
+      const text = event.results[index][0].transcript.trim();
+      if (!text) continue;
+      if (event.results[index].isFinal) heard(text);
+      else if (!isEcho(text) && !speaking) caption(text);
+    }
   };
   recognition.onerror = event => {
     if (["not-allowed", "service-not-allowed"].includes(event.error)) {
@@ -918,12 +1084,15 @@ async function uploadPhotos(files) {
   try {
     startThinking(PHOTO_THINKING);
     const room = Math.max(1, 6 - thumbnails.length);
-    const images = await Promise.all([...files].slice(0, Math.min(room, 6)).map(shrink));
+    const read = await Promise.allSettled([...files].slice(0, Math.min(room, 6)).map(shrink));
+    const images = read.filter(item => item.status === "fulfilled").map(item => item.value);
+    if (!images.length) throw new Error("unreadable");
+    if (images.length < read.length) showToast("Some pictures couldn't be opened. Use JPG or PNG for those.");
     pendingThumbs = images.map(image => `data:image/jpeg;base64,${image}`);
     await request("/api/photos", { session_id:sessionId, images }, PHOTO_THINKING);
   } catch {
     restorePrevious();
-    showToast("Those photos couldn't be read. Try again.");
+    showToast("Those pictures couldn't be opened. Try JPG or PNG.");
   }
 }
 
@@ -938,9 +1107,15 @@ async function capture() {
   const run = ++camRun;
   $("camResultWrap").hidden = true;
   $("camCount").textContent = "";
+  $("camFile").hidden = false;
   openSheet("cam", "Check this", "Hold still. I take the photo when the count ends.");
   try {
-    camStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"environment" } });
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"environment" } });
+    } catch {
+      if (run === camRun) $("sheetSay").textContent = "I can't reach the camera. Choose a picture instead.";
+      return restVoice();
+    }
     if (run !== camRun) return stopCamera();
     const video = $("video"), canvas = $("canvas");
     video.srcObject = camStream;
@@ -954,36 +1129,42 @@ async function capture() {
     canvas.height = video.videoHeight * scale;
     canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
     const image = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
-    stopCamera();
-    $("camCount").textContent = "";
-    $("sheetSay").textContent = "Checking photo";
-    busy = true;
-    setVoice("thinking");
-    const result = await (await post("/api/vision", { session_id:sessionId, image })).json();
-    busy = false;
-    if (run !== camRun) return;
-    last = result;
-    if (result.phase === "steps") {
-      $("camResult").textContent = result.say;
-      $("camResultWrap").hidden = false;
-      $("sheetSay").textContent = "Here's what I found.";
-      paint(result);
-    } else {
-      pendingThumbs = [`data:image/jpeg;base64,${image}`];
-      closeSheet();
-      photoMode = true;
-      paint(result);
-    }
-    await speak(result.say);
+    await checkImage(image, run);
   } catch {
     busy = false;
     if (run === camRun) {
       closeSheet();
       setVoice("error");
-      showToast("I couldn't take a photo. Check camera permission and try again.");
+      showToast("I couldn't check that picture. Try again.");
       setTimeout(restVoice, 3000);
     }
   }
+}
+
+async function checkImage(image, run) {
+  stopCamera();
+  silence();
+  $("camCount").textContent = "";
+  $("camFile").hidden = true;
+  $("sheetSay").textContent = "Checking photo";
+  busy = true;
+  setVoice("thinking");
+  const result = await (await post("/api/vision", { session_id:sessionId, image })).json();
+  busy = false;
+  if (run !== camRun) return;
+  last = result;
+  if (["items", "gate", "steps"].includes(result.phase)) {
+    $("camResult").textContent = result.say;
+    $("camResultWrap").hidden = false;
+    $("sheetSay").textContent = "Here's what I found.";
+    paint(result);
+  } else {
+    pendingThumbs = [`data:image/jpeg;base64,${image}`];
+    closeSheet();
+    photoMode = true;
+    paint(result);
+  }
+  await speak(result.say);
 }
 
 function newTask() {
@@ -1010,18 +1191,36 @@ $("start").onclick = async () => {
   started = true;
   setupVoice();
   showScreen("ready");
-  await speak("What do you need help with?");
+  startListening();
+  await speak("Korjaa online. What are we fixing or making?");
 };
 $("stop").onclick = () => {
   silence();
   closeSheet();
   if (started) send("stop");
 };
+$("voice").onclick = () => { if (speaking) silence(); };
+$("timer").onclick = () => setTimer(0);
 $("newTask").onclick = newTask;
 $("overNew").onclick = newTask;
 $("goPhotos").onclick = () => {
   photoMode = true;
   paintPhotos({ product:"", seen_parts:[] });
+};
+$("camFile").onclick = () => $("checkPhoto").click();
+$("checkPhoto").onchange = async event => {
+  const file = event.target.files[0];
+  event.target.value = "";
+  if (!file) return;
+  const run = ++camRun;
+  try {
+    await checkImage(await shrink(file), run);
+  } catch {
+    busy = false;
+    closeSheet();
+    showToast("That picture couldn't be opened. Try JPG or PNG.");
+    restVoice();
+  }
 };
 $("useCamera").onclick = () => capture();
 $("checkThis").onclick = () => capture();
@@ -1047,7 +1246,7 @@ $("keyboard").onclick = () => {
 $("typed").onsubmit = event => {
   event.preventDefault();
   const text = $("text").value.trim();
-  if (text) send(text);
+  if (text) { caption(text); send(text); }
   $("text").value = "";
 };
 document.addEventListener("keydown", event => {

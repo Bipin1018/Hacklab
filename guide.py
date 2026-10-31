@@ -1,13 +1,20 @@
+import json
 import os
 import re
+from pathlib import Path
 from urllib.parse import quote_plus, urlparse
 
 import httpx
 
 from models import ask_json
-from safety import check_refusal
+from safety import check_refusal, norm, unsafe_step
 
+PROCEDURES = Path(__file__).parent / "procedures"
 SENSITIVE_ITEM = re.compile(r"\b(batter(y|ies)|chargers?|adapters?|power suppl(y|ies)|fuses?|plugs?)\b", re.I)
+
+
+class ModelDown(Exception):
+    """The model gave no usable reply, such as during rate limiting. The task itself may be fine."""
 
 
 async def web_search(query: str) -> list[dict]:
@@ -35,9 +42,18 @@ def shop_links(query: str) -> list[dict]:
     q = quote_plus(query)
     return [
         {"shop": "eBay", "title": f"Search eBay for {query}", "url": f"https://www.ebay.com/sch/i.html?_nkw={q}&_sop=15", "price": "", "why": "Lowest prices first"},
-        {"shop": "Amazon", "title": f"Search Amazon for {query}", "url": f"https://www.amazon.de/s?k={q}", "price": "", "why": "Wide selection"},
-        {"shop": "Google Shopping", "title": f"Compare {query}", "url": f"https://www.google.com/search?tbm=shop&q={q}", "price": "", "why": "Compare several shops"},
+        {"shop": "Verkkokauppa.com", "title": f"Search Verkkokauppa.com for {query}", "url": f"https://www.verkkokauppa.com/fi/search?query={q}", "price": "", "why": "Finnish shop with store pick-up"},
+        {"shop": "Google Shopping", "title": f"Compare {query}", "url": f"https://www.google.com/search?tbm=shop&gl=fi&q={q}", "price": "", "why": "Compare several shops"},
     ]
+
+
+def saved_plan(request: str) -> dict | None:
+    # Saved guides answer instantly, with no search or model call, and survive bad Wi-Fi.
+    for path in sorted(PROCEDURES.glob("*.json")):
+        guide = json.loads(path.read_text(encoding="utf-8"))
+        if re.search(guide["match"], norm(request)):
+            return {key: guide[key] for key in ("title", "safety", "items", "steps", "sources")} | {"saved": True}
+    return None
 
 
 def clean_text(text: str, limit: int) -> str:
@@ -52,11 +68,23 @@ def clean_list(values, limit: int, count: int) -> list[str]:
 
 async def make_plan(model, request: str, seen: str = "", images: list[str] | None = None,
                     product: str = "") -> dict | None:
+    if not images and not seen and (guide := saved_plan(request)):
+        return guide
+    # A second, broader search rescues tasks the first one missed, such as unusual machines.
+    for query in (f"{product} {request} step by step instructions", f"how to {request} {product} repair guide troubleshooting"):
+        sources = await web_search(clean_text(query, 300))
+        if not sources and not images:
+            continue
+        plan, retry = await plan_from_sources(model, request, sources, seen, images)
+        if plan or not retry:
+            return plan
+    return None
+
+
+async def plan_from_sources(model, request: str, sources: list[dict], seen: str, images: list[str] | None) -> tuple[dict | None, bool]:
+    """Returns the plan, and whether another search could help."""
     task = f"{request}. Available items: {seen}" if seen else request
-    sources = await web_search(f"{product} {request} step by step instructions".strip())
-    if not sources and not images:
-        return None
-    pages = "\n\n".join(
+    pages ="\n\n".join(
         f"[SOURCE {i}] {s['title']}\n{s['text']}" for i, s in enumerate(sources, 1)
     )
     photo_rules = (
@@ -87,6 +115,8 @@ async def make_plan(model, request: str, seen: str = "", images: list[str] | Non
         '"steps":[{"say":"...","detail":"...","uses":["..."],"check":""}],"used_sources":[1]}\n\n'
         f"{pages}"
     ), images)
+    if not result:
+        raise ModelDown
     steps = [
         {
             "say": clean_text(s.get("say", ""), 220),
@@ -97,12 +127,12 @@ async def make_plan(model, request: str, seen: str = "", images: list[str] | Non
         for s in result.get("steps", []) if isinstance(s, dict) and s.get("say")
     ][:25]
     if len(steps) < 2:
-        return None
+        return None, True
     steps[-1]["check"] = ""
     safety = clean_list(result.get("safety"), 200, 5) or ["Stop if anything seems unsafe."]
-    all_text = " ".join([*safety, *(f"{s['say']} {s['detail']}" for s in steps)])
-    if check_refusal(all_text):
-        return None
+    # Safety warnings are left out: they name the hazards on purpose.
+    if any(unsafe_step(f"{s['say']}. {s['detail']}") for s in steps):
+        return None, False
     numbers = [n for n in result.get("used_sources", []) if isinstance(n, int) and 1 <= n <= len(sources)]
     used = [sources[n - 1] for n in numbers] or sources[:1]
     raw_items = result.get("items") if isinstance(result.get("items"), list) else []
@@ -114,7 +144,7 @@ async def make_plan(model, request: str, seen: str = "", images: list[str] | Non
         "items": items,
         "steps": steps,
         "sources": [{"title": s["title"], "url": s["url"]} for s in used],
-    }
+    }, False
 
 
 async def find_item(model, item: str, product: str = "", region: str = "") -> dict | None:
