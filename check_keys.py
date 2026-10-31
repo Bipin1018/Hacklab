@@ -22,7 +22,7 @@ async def main():
     except Exception as error:
         print("Tavily FAILED:", error)
     try:
-        print("ElevenLabs audio bytes:", len(await voice.tts("Korjaa is ready.")))
+        print("ElevenLabs audio bytes:", len(await voice.tts("Sarathi is ready.")))
     except Exception as error:
         print("ElevenLabs FAILED:", error)
 

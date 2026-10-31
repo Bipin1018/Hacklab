@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#12171f">
-<title>Korjaa</title>
+<title>Sārathi</title>
 <style>
 :root {
   --bg:#12171f; --bg-deep:#0d1118; --card:#1b222d; --card-raised:#242d3a; --line:#36424f;
@@ -45,6 +45,13 @@ html,body { height:100%; margin:0; overflow:hidden; background:var(--bg); }
 .caption-say { color:var(--text); overflow-wrap:anywhere; }
 .timer { appearance:none; flex:none; display:inline-flex; align-items:center; gap:var(--s2); min-height:var(--tap); margin-left:auto; padding:0 var(--s3); border:0; border-radius:var(--r-full); background:var(--mint-soft); color:var(--mint); font:700 15px/1 var(--font); font-variant-numeric:tabular-nums; cursor:pointer; }
 .timer:focus-visible { outline:3px solid var(--text); outline-offset:2px; }
+.working { position:relative; z-index:22; flex:none; display:flex; align-items:center; gap:var(--s3); width:calc(100% - 2 * var(--s4)); max-width:688px; min-height:64px; margin:var(--s2) auto; padding:var(--s2) var(--s2) var(--s2) var(--s4); border-radius:var(--r-m); background:var(--card-raised); box-shadow:inset 0 0 0 1.5px var(--mint),var(--shadow); animation:enter .2s var(--ease); }
+.working-spin { flex:none; width:24px; height:24px; border-radius:50%; border:3px solid var(--line); border-top-color:var(--mint); animation:spin .9s linear infinite; }
+.working-text { flex:1 1 auto; min-width:0; font-size:15px; font-weight:650; line-height:1.3; }
+.working-time { display:block; color:var(--muted); font-size:13px; font-weight:500; font-variant-numeric:tabular-nums; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.is-busy #chips,.is-busy #items,.is-busy #photoGrid,.is-busy #dock,.is-busy .stepbar-actions,.is-busy .talk-hint { opacity:.45; }
+.field input:disabled { opacity:.6; cursor:not-allowed; }
 .thread { display:flex; flex-direction:column; gap:var(--s2); margin-top:var(--s3); }
 .thread:empty { display:none; }
 .bubble { align-self:flex-start; max-width:92%; padding:var(--s3) var(--s4); border-radius:var(--r-m); background:var(--mint-soft); font-size:16px; animation:enter .24s var(--ease); }
@@ -252,7 +259,7 @@ details[open] summary svg { transform:rotate(180deg); }
 <body>
 <div class="app">
   <header class="topbar">
-    <span class="brand">Korjaa</span>
+    <span class="brand">Sārathi</span>
     <span class="grow"></span>
     <button id="voice" class="voice voice--idle">
       <span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -416,6 +423,12 @@ details[open] summary svg { transform:rotate(180deg); }
       </div>
     </div>
 
+    <div id="working" class="working" role="status" hidden>
+      <span class="working-spin" aria-hidden="true"></span>
+      <span class="working-text"><span id="workingText">Working on it</span><span id="workingTime" class="working-time"></span></span>
+      <button id="cancelWork" class="btn btn--small btn--line">Cancel</button>
+    </div>
+
     <div id="dock" class="dock">
       <div id="d-start"><button id="start" class="btn btn--main">Start</button></div>
       <div id="d-ready" class="grid2" hidden>
@@ -487,7 +500,7 @@ details[open] summary svg { transform:rotate(180deg); }
     <p id="askLine" class="small" style="margin:0 0 8px;color:var(--text)" hidden>Which item do you need to find?</p>
     <form id="typed">
       <input id="text" aria-label="Type what you want to say" placeholder="Try &quot;I don't have wood glue&quot;" autocomplete="off">
-      <button class="btn btn--icon" style="background:var(--mint);color:var(--on-mint)" aria-label="Send">
+      <button id="typedSend" class="btn btn--icon" style="background:var(--mint);color:var(--on-mint)" aria-label="Send">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
       </button>
     </form>
@@ -516,15 +529,15 @@ const LABELS = { idle:"Ready", listening:"Listening", thinking:"Working on it", 
 const SCREENS = ["start", "ready", "photos", "thinking", "caution", "items", "gate", "steps", "done", "stopped", "ended"];
 const DOCKS = { start:"start", ready:"ready", photos:"photos", caution:"caution", items:"items", gate:"gate", steps:"steps", done:"over", stopped:"over", ended:"over" };
 const CHIPS = [["Washing machine won't drain", "My washing machine won't drain"], ["Assemble a bookcase", "Assemble a bookcase"], ["Microwave won't heat", "My microwave won't heat"]];
-// Korjaa is often misheard, so the wake word accepts the usual transcriptions.
-const WAKE = /^(?:(?:hey|ok|okay|hi)\s+)?(?:korjaa|korja|koria|korea|correa|kordia|corea)\b[\s,.!?]*/i;
+// Sarathi is often misheard, so the wake word accepts the usual transcriptions.
+const WAKE = /^(?:(?:hey|ok|okay|hi)\s+)?(?:sarathi|saarathi|saarthi|sarthi|sarati|sarathy|sarthy)\b[\s,.!?]*/i;
 const HAZARD = /\b(stop|smoke|smoking|fire|burning|sparks?|sparking|shock|shocked|gas)\b/i;
 const BUYING = /\b(?:(?:don't|do not) have (?!to\b|time\b)|(?:i'm|i am) missing |need to (?:buy|order) |where (?:can|could|do|should) i (?:buy|order)\b|where (?:can|could) i (?:find|get) (?:a |an |some )?(?:replacement|new|spare)\b|\b(?:buy|purchase) )/i;
 const VOICE_QUESTION =/^(what|what's|how|why|where|when|which|who|can|could|should|is|are|do|does|did|will|would|am)\b/i;
 const SHORT_COMMAND = /\b(next|back|repeat|again|stuck|help|continue|ready|wait|hang on|hold on|pause|quiet|yes|no|done|sorry|skip|check this|camera|take a look|timer)\b/i;
 const ACKS = ["One moment.", "Let me check.", "Let me think.", "On it."];
 const FOLLOW_UP_MS = 15000;
-// Phones share the mic with the speaker badly, so talking over Korjaa is desktop only there. Tap the voice pill instead.
+// Phones share the mic with the speaker badly, so talking over Sārathi is desktop only there. Tap the voice pill instead.
 const BARGE_IN = !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const TICK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.6 4.6L19 7.6"></path></svg>';
 const THINKING = ["Finding instructions", "Checking safety advice", "Writing your steps"];
@@ -537,7 +550,8 @@ let requestId = 0, speechId = 0, camRun = 0, lastStep = 0, flip = false, last = 
 let thinkTimer = null, toastTimer = null, sheetMode = "", shopLoading = false;
 let thumbnails = [], pendingThumbs = [], ticked = new Set(), planKey = "";
 let spoken = "", spokenAt = 0, analyser = null, levelFrame = 0, timerEnd = 0, timerTick = null, thinkDelay = null, ackDelay = null;
-let talkedAt = 0, ackIndex = 0, lastHeard = "", threads = {}, threadStep = 0;
+let talkedAt = 0, ackIndex = 0, lastHeard = "", threads = {}, replaying = false;
+let inFlight = null, workingDelay = null, workingTick = null, threadTitle = "";
 
 function make(tag, className, text) {
   const node = document.createElement(tag);
@@ -570,6 +584,67 @@ function restVoice() {
   setVoice(recognition && listening ? "listening" : "idle");
 }
 
+// One switch for "working": it locks input and shows what's happening, with a way out.
+function setBusy(on, label = "Working on it") {
+  busy = on;
+  document.querySelector(".app").classList.toggle("is-busy", on);
+  document.querySelectorAll("#dock,#chips,#items,#photoGrid,.stepbar-actions,.talk-hint").forEach(node => { node.inert = on; });
+  $("text").disabled = $("typedSend").disabled = on;
+  $("text").placeholder = on ? "Working on it. Press Cancel to ask something else." : "Try \"I don't have wood glue\"";
+  clearTimeout(workingDelay);
+  clearInterval(workingTick);
+  if (!on) {
+    $("working").hidden = true;
+    // Disabling the box dropped the cursor, so put it back ready for the next question.
+    if (!$("field").hidden) $("text").focus();
+    return;
+  }
+  $("workingText").textContent = label;
+  $("workingTime").textContent = "";
+  const started = Date.now();
+  // Instant replies finish before this, so they never flash the panel.
+  workingDelay = setTimeout(() => {
+    $("working").hidden = false;
+    workingTick = setInterval(() => {
+      $("workingTime").textContent = `${Math.round((Date.now() - started) / 1000)}s, this can take up to a minute`;
+    }, 1000);
+  }, 150);
+}
+
+async function cancelWork() {
+  if (!busy) return;
+  requestId++;
+  camRun++;
+  inFlight?.abort();
+  clearTimeout(thinkDelay);
+  clearTimeout(ackDelay);
+  clearInterval(thinkTimer);
+  silence();
+  stopCamera();
+  sheetMode = "";
+  shopLoading = false;
+  $("sheet").hidden = $("scrim").hidden = true;
+  pendingThumbs = [];
+  $("toast").hidden = true;
+  setBusy(false);
+  const id = requestId;
+  try {
+    const result = await (await post("/api/cancel", { session_id:sessionId })).json();
+    if (id !== requestId) return;
+    last = result;
+    replaying = true;
+    paint(result);
+    caption("", result.say);
+    await speak("Okay, cancelled.");
+  } catch {
+    restorePrevious();
+    caption("", "Cancelled.");
+  } finally {
+    replaying = false;
+    restVoice();
+  }
+}
+
 function showToast(message) {
   $("toastText").textContent = message;
   $("toast").hidden = false;
@@ -597,32 +672,36 @@ function startThinking(messages) {
   showScreen("thinking");
 }
 
-async function post(url, body) {
-  const response = await fetch(url, { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(body) });
+async function post(url, body, signal) {
+  const response = await fetch(url, { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(body), signal });
   if (!response.ok) throw new Error(url);
   return response;
 }
 
 function restorePrevious() {
+  replaying = true;
   if (last) paint(last);
   else showScreen(started ? "ready" : "start");
+  replaying = false;
 }
 
-async function request(url, body, messages) {
+async function request(url, body, messages, label) {
   const id = ++requestId;
-  busy = true;
+  inFlight?.abort();
+  inFlight = new AbortController();
+  setBusy(true, label);
   setVoice("thinking");
   clearTimeout(thinkDelay);
   clearTimeout(ackDelay);
   // Instant replies never flash the thinking screen or get an acknowledgement.
-  if (messages) thinkDelay = setTimeout(() => startThinking(messages), 350);
+  if (messages) thinkDelay = setTimeout(() => startThinking(messages), 150);
   if (url === "/api/turn" && !["stop", "start over"].includes(body.text)) ackDelay = setTimeout(() => speak(ACKS[ackIndex++ % ACKS.length]), 900);
   try {
-    const result = await (await post(url, body)).json();
+    const result = await (await post(url, body, inFlight.signal)).json();
     if (id !== requestId) return;
     clearTimeout(thinkDelay);
     clearTimeout(ackDelay);
-    busy = false;
+    setBusy(false);
     last = result;
     paint(result);
     if (result.action === "timer") setTimer(result.timer);
@@ -632,28 +711,29 @@ async function request(url, body, messages) {
     if (id !== requestId) return;
     clearTimeout(thinkDelay);
     clearTimeout(ackDelay);
-    busy = false;
+    setBusy(false);
     closeSheet();
     pendingThumbs = [];
     restorePrevious();
     setVoice("error");
     showToast("Connection problem. Try again.");
+    // The toast fades, so this stays until the next request and nothing looks silently ignored.
+    caption(undefined, "That didn't go through. Please try again.");
     setTimeout(restVoice, 3000);
   }
 }
 
 function send(text) {
   const urgent = text === "start over" || HAZARD.test(text);
-  // During a task, a new command replaces whatever is still being answered, as it would with a person.
-  const canReplace = ["items", "gate", "steps"].includes(phase) && sheetMode !== "cam";
-  if (busy && !urgent && !canReplace) return showToast("One moment, I'm still working on that.");
+  if (busy && !urgent) return showToast("I'm still working on that. Press Cancel to ask something else.");
   silence();
   talkedAt = Date.now();
   lastHeard = text;
   lastCommand = text.toLowerCase();
   if (!shopLoading && ["items", "gate", "steps"].includes(phase) && BUYING.test(text)) showShopLoading("Finding it");
   const longTask =!["stop", "start over", "camera"].includes(text) && ["idle", "caution", "done", "stopped", "ended"].includes(phase);
-  return request("/api/turn", { session_id:sessionId, text }, longTask ? THINKING : null);
+  const label = longTask ? "Finding instructions" : BUYING.test(text) ? "Searching shops" : "Thinking about that";
+  return request("/api/turn", { session_id:sessionId, text }, longTask ? THINKING : null, label);
 }
 
 function syncThumbs(r) {
@@ -667,6 +747,12 @@ function syncThumbs(r) {
 function paint(r) {
   const samePhase = r.phase === phase;
   phase = r.phase;
+  // A new task starts its own conversation and its own step count.
+  if (r.title && r.title !== threadTitle) {
+    threadTitle = r.title;
+    threads = {};
+    lastStep = 0;
+  }
   syncThumbs(r);
   if (r.say === "Which item do you need to find?") {
     $("field").hidden = false;
@@ -684,7 +770,7 @@ function paint(r) {
   if (["stopped", "ended"].includes(r.phase)) setTimer(0);
   document.querySelectorAll(".trustLine").forEach(node => {
     if (r.saved) node.innerHTML = `${TICK}Saved guide`;
-    else node.textContent = "Built from web sources. Check them.";
+    else node.textContent = r.general ? "General advice, not from a guide for your model. Check as you go." : "Built from web sources. Check them.";
   });
   ({ idle:paintIdle, caution:paintCaution, items:paintItems, gate:paintGate, steps:paintSteps, done:paintDone, stopped:paintStopped }[r.phase] || paintEnded)(r);
   updateWakeLock();
@@ -821,6 +907,7 @@ function paintSteps(r) {
 // Each step keeps its own conversation, so going back shows what was already said.
 function renderThread(step, reply) {
   const entries = threads[step] || (threads[step] = []);
+  if (replaying) reply = "";
   if (reply) {
     entries.push({ you:lastHeard, say:reply });
     if (entries.length > 8) entries.shift();
@@ -830,7 +917,7 @@ function renderThread(step, reply) {
     const you = make("div", "bubble bubble--you");
     you.append(make("span", "bubble-who", "You"), make("span", "", entry.you));
     const say = make("div", "bubble");
-    say.append(make("span", "bubble-who", "Korjaa"), make("span", "", entry.say));
+    say.append(make("span", "bubble-who", "Sārathi"), make("span", "", entry.say));
     return [you, say];
   }));
   $("scroll").scrollTop = reply ? $("scroll").scrollHeight : 0;
@@ -934,7 +1021,7 @@ function renderShop(shopping, say) {
     return card;
   });
   const info = make("div");
-  const note = make("p", "small", "Korjaa never places an order. You decide and buy on the shop's own page.");
+  const note = make("p", "small", "Sārathi never places an order. You decide and buy on the shop's own page.");
   note.style.margin = "12px 0 0";
   info.append(...renderList("How to buy it", shopping.buying_steps, "ol"), ...renderList("Check before you order", shopping.checks, "ul"), note);
   $("sheetBody").replaceChildren(...options, info);
@@ -949,7 +1036,8 @@ async function speak(text) {
   speaking = true;
   spoken = text.toLowerCase();
   if (recognition && !BARGE_IN) try { recognition.stop(); } catch {}
-  setVoice("speaking");
+  // "Let me think" plays while work continues, and the status must still say so.
+  setVoice(busy ? "thinking" : "speaking");
   try {
     const response = await post("/api/tts", { text });
     const audio = await audioCtx.decodeAudioData(await response.arrayBuffer());
@@ -1017,7 +1105,7 @@ function isEcho(text) {
   return words.length > 0 && hits / words.length >= 0.6;
 }
 
-// Decides what the room said is meant for Korjaa. Hazard words always get through.
+// Decides what the room said is meant for Sārathi. Hazard words always get through.
 function heard(raw) {
   const woke = WAKE.test(raw.trim());
   const text = raw.trim().replace(WAKE, "").trim();
@@ -1027,6 +1115,10 @@ function heard(raw) {
   }
   const hazard = HAZARD.test(text);
   if (!text || (!hazard && !woke && isEcho(text))) return;
+  if (busy && !hazard) {
+    if (/^(please )?(cancel( that| it)?|never ?mind|forget it)\b/i.test(text)) cancelWork();
+    return;
+  }
   const words = text.split(/\s+/).length;
   const guided = ["steps", "gate", "items", "caution"].includes(phase);
   if (!hazard && !woke) {
@@ -1136,7 +1228,7 @@ async function uploadPhotos(files) {
     if (!images.length) throw new Error("unreadable");
     if (images.length < read.length) showToast("Some pictures couldn't be opened. Use JPG or PNG for those.");
     pendingThumbs = images.map(image => `data:image/jpeg;base64,${image}`);
-    await request("/api/photos", { session_id:sessionId, images }, PHOTO_THINKING);
+    await request("/api/photos", { session_id:sessionId, images }, PHOTO_THINKING, "Reading your photos");
   } catch {
     restorePrevious();
     showToast("Those pictures couldn't be opened. Try JPG or PNG.");
@@ -1178,8 +1270,8 @@ async function capture() {
     const image = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
     await checkImage(image, run);
   } catch {
-    busy = false;
     if (run === camRun) {
+      setBusy(false);
       closeSheet();
       setVoice("error");
       showToast("I couldn't check that picture. Try again.");
@@ -1194,11 +1286,13 @@ async function checkImage(image, run) {
   $("camCount").textContent = "";
   $("camFile").hidden = true;
   $("sheetSay").textContent = "Checking photo";
-  busy = true;
+  inFlight?.abort();
+  inFlight = new AbortController();
+  setBusy(true, "Checking your picture");
   setVoice("thinking");
-  const result = await (await post("/api/vision", { session_id:sessionId, image })).json();
-  busy = false;
+  const result = await (await post("/api/vision", { session_id:sessionId, image }, inFlight.signal)).json();
   if (run !== camRun) return;
+  setBusy(false);
   last = result;
   if (["items", "gate", "steps"].includes(result.phase)) {
     $("camResult").textContent = result.say;
@@ -1240,7 +1334,7 @@ $("start").onclick = async () => {
   setupVoice();
   showScreen("ready");
   startListening();
-  await speak("Korjaa online. What are we fixing or making?");
+  await speak("Sarathi online. What are we fixing or making?");
 };
 $("stop").onclick = () => {
   silence();
@@ -1269,7 +1363,8 @@ $("checkPhoto").onchange = async event => {
   try {
     await checkImage(await shrink(file), run);
   } catch {
-    busy = false;
+    if (run !== camRun) return;
+    setBusy(false);
     closeSheet();
     showToast("That picture couldn't be opened. Try JPG or PNG.");
     restVoice();
@@ -1285,8 +1380,10 @@ $("photos").onchange = async event => {
 document.querySelectorAll("[data-send]").forEach(button => {
   button.onclick = () => send(button.dataset.send);
 });
-$("sheetClose").onclick = closeSheet;
-$("scrim").onclick = closeSheet;
+const leaveSheet = () => (busy ? cancelWork() : closeSheet());
+$("cancelWork").onclick = cancelWork;
+$("sheetClose").onclick = leaveSheet;
+$("scrim").onclick = leaveSheet;
 $("camBack").onclick = closeSheet;
 $("keyboard").onclick = () => {
   const open = $("field").hidden;
@@ -1299,11 +1396,12 @@ $("keyboard").onclick = () => {
 $("typed").onsubmit = event => {
   event.preventDefault();
   const text = $("text").value.trim();
+  if (busy) return;
   if (text) { caption(text); send(text); }
   $("text").value = "";
 };
 document.addEventListener("keydown", event => {
-  if (event.key === "Escape") closeSheet();
+  if (event.key === "Escape") busy ? cancelWork() : closeSheet();
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") { wakeLock = null; updateWakeLock(); }

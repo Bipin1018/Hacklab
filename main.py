@@ -31,6 +31,10 @@ async def lifespan(_: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
+class Cancel(BaseModel):
+    session_id: str
+
+
 class Turn(BaseModel):
     session_id: str
     text: str
@@ -62,6 +66,11 @@ def index():
 @app.post("/api/turn")
 async def turn(body: Turn):
     return await engine.turn(session(body.session_id), body.text[:1000])
+
+
+@app.post("/api/cancel")
+def cancel(body: Cancel):
+    return engine.cancel(session(body.session_id))
 
 
 @app.post("/api/vision")

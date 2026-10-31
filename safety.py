@@ -5,7 +5,22 @@ EMERGENCY_LINE = (
     "If anyone is in danger or there is a fire, call 112."
 )
 
+HARM_LINE = "I can't help with that. If someone is hurt or in danger, call 112."
+SELF_HARM_LINE = (
+    "I'm really sorry you're going through this, and I can't help with that. Please talk to someone now. "
+    "If you might act on it, call 112. In Finland, the MIELI Crisis Helpline is on 09 2525 0111."
+)
+
 REFUSALS = [
+    (r"\b(kill(ing)? myself|suicide|end(ing)? my life|hurt(ing)? myself|self harm)\b", SELF_HARM_LINE),
+    (r"\b(hide|hiding|dispose( of)?|disposing( of)?|get(ting)? rid of|bury|burying|dissolve|dissolving|dismember(ing)?)\b"
+     r" (\w+'?s? ){0,3}?(body|bodies|corpse|corpses)\b(?<!car body)(?<!van body)", HARM_LINE),
+    (r"\b(kill|murder|poison|stab|strangle|kidnap|assault|hurt|harm|attack|drug)\b (\w+'?s? ){0,2}?"
+     r"(someone|somebody|anyone|person|people|him|her|them|wife|husband|partner|girlfriend|boyfriend|neighbou?rs?|boss|child|kids?|baby)\b",
+     HARM_LINE),
+    (r"\b(make|making|build|building|print|printing)\b.*(?<!bath )\b(bombs?|explosives?|molotov|nerve agent|ghost gun|silencer)\b", HARM_LINE),
+    (r"\b(make|making|cook|cooking|synthesi[sz]e)\b.*\b(meth|heroin|fentanyl|crack cocaine)\b", HARM_LINE),
+    (r"\b(hotwire|steal|stealing|shoplift|stalk|stalking|spy on|break into (a|an|someone's|my neighbou?r's|their))\b", HARM_LINE),
     # Fault words, not the bare noun, so "reheat it in the microwave" still works for recipes.
     (r"\bmagnetron\b|\bmicrowave\b.*\b(won't|wont|isn't|isnt|not|stopped|broken|repair|sparks?|sparking|capacitor|fault|faulty|dead|fuse)\b"
      r"|\b(fix|repair|take apart|dismantle)\b.*\bmicrowave\b|\bopen (my |the |a )?microwave (oven )?(case|casing|cover)\b|\bopen up (my |the |a )?microwave\b",
