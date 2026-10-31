@@ -37,7 +37,10 @@ hand. Neither can look at what you are holding and tell you whether it matches.
 | You say | Korjaa |
 |---|---|
 | *"Korjaa"* | Answers "Yes?" |
-| *"What do I do with the hose?"* | Answers from the guide, or says the guide doesn't cover it |
+| *"Next"*, *"okay, done"*, *"what now?"*, *"keep going"* | Moves to the next step |
+| *"Say that again"*, *"sorry?"*, *"one more time"* | Repeats the step |
+| *"Go back"*, *"go to step 4"* | Moves to that step |
+| *"Which way does it turn?"*, then *"and how far?"* | Talks it through and remembers what you just said, from the guide or a fresh web search |
 | *"Where are we?"* | Tells you the step and repeats it |
 | *"Set a timer for ten minutes"* | Runs a timer on screen, then tells you when it's done |
 | *"Check this"* or *"Take a look"* | Takes a photo in three seconds and compares it with the step |
@@ -46,9 +49,13 @@ hand. Neither can look at what you are holding and tell you whether it matches.
 On desktop browsers you can talk over Korjaa with short commands. On phones the mic
 and speaker clash, so tap the voice pill or any button to cut it off.
 
-During a guided task, Korjaa ignores long sentences that aren't questions unless they
-start with its name, so nearby conversations don't move your step. Hazard words always
-get through.
+Every voice command also has a button, and either one interrupts Korjaa, even while it's
+working on an answer. Each step keeps its own conversation on screen.
+
+For 15 seconds after each exchange, Korjaa treats whatever you say as part of the
+conversation. After that, long sentences that aren't questions need its name, so nearby
+conversations don't move your step. Hazard words always get through. Only your own words
+can pass the safety gate, never the model's interpretation of them.
 
 ## How it stays grounded
 

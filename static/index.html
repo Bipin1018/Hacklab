@@ -45,6 +45,13 @@ html,body { height:100%; margin:0; overflow:hidden; background:var(--bg); }
 .caption-say { color:var(--text); overflow-wrap:anywhere; }
 .timer { appearance:none; flex:none; display:inline-flex; align-items:center; gap:var(--s2); min-height:var(--tap); margin-left:auto; padding:0 var(--s3); border:0; border-radius:var(--r-full); background:var(--mint-soft); color:var(--mint); font:700 15px/1 var(--font); font-variant-numeric:tabular-nums; cursor:pointer; }
 .timer:focus-visible { outline:3px solid var(--text); outline-offset:2px; }
+.thread { display:flex; flex-direction:column; gap:var(--s2); margin-top:var(--s3); }
+.thread:empty { display:none; }
+.bubble { align-self:flex-start; max-width:92%; padding:var(--s3) var(--s4); border-radius:var(--r-m); background:var(--mint-soft); font-size:16px; animation:enter .24s var(--ease); }
+.bubble--you { align-self:flex-end; background:var(--card-raised); }
+.bubble-who { display:block; margin-bottom:2px; color:var(--mint); font-size:13px; font-weight:700; }
+.bubble--you .bubble-who { color:var(--muted); }
+.talk-hint { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--s2); margin-top:var(--s3); }
 .trust { display:flex; align-items:center; gap:var(--s2); margin-top:var(--s2); color:var(--muted); font-size:14px; }
 .trust svg { flex:none; }
 .bars { display:inline-flex; align-items:center; gap:2px; height:14px; }
@@ -374,7 +381,11 @@ details[open] summary svg { transform:rotate(180deg); }
             <strong>Did that fix it?</strong>
             <p id="fixQuestion"></p>
           </div>
-          <div id="stuck" class="stuck enter" aria-live="polite" hidden><strong id="stuckLabel">Try this</strong><span id="stuckText"></span></div>
+          <div id="thread" class="thread" aria-live="polite"></div>
+          <div class="talk-hint">
+            <span id="talkHint" class="small">Just talk to me about this step.</span>
+            <button id="askStep" class="btn btn--small btn--line">Type a question</button>
+          </div>
           <div id="sourcesWrap" class="quiet-sources" hidden>
             <details>
               <summary>Sources
@@ -510,7 +521,9 @@ const WAKE = /^(?:(?:hey|ok|okay|hi)\s+)?(?:korjaa|korja|koria|korea|correa|kord
 const HAZARD = /\b(stop|smoke|smoking|fire|burning|sparks?|sparking|shock|shocked|gas)\b/i;
 const BUYING = /\b(?:(?:don't|do not) have (?!to\b|time\b)|(?:i'm|i am) missing |need to (?:buy|order) |where (?:can|could|do|should) i (?:buy|order)\b|where (?:can|could) i (?:find|get) (?:a |an |some )?(?:replacement|new|spare)\b|\b(?:buy|purchase) )/i;
 const VOICE_QUESTION =/^(what|what's|how|why|where|when|which|who|can|could|should|is|are|do|does|did|will|would|am)\b/i;
-const SHORT_COMMAND = /\b(next|back|repeat|again|stuck|help|continue|ready|wait|hold on|pause|quiet|yes|no|done|check this|camera|take a look|timer)\b/i;
+const SHORT_COMMAND = /\b(next|back|repeat|again|stuck|help|continue|ready|wait|hang on|hold on|pause|quiet|yes|no|done|sorry|skip|check this|camera|take a look|timer)\b/i;
+const ACKS = ["One moment.", "Let me check.", "Let me think.", "On it."];
+const FOLLOW_UP_MS = 15000;
 // Phones share the mic with the speaker badly, so talking over Korjaa is desktop only there. Tap the voice pill instead.
 const BARGE_IN = !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const TICK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.6 4.6L19 7.6"></path></svg>';
@@ -524,6 +537,7 @@ let requestId = 0, speechId = 0, camRun = 0, lastStep = 0, flip = false, last = 
 let thinkTimer = null, toastTimer = null, sheetMode = "", shopLoading = false;
 let thumbnails = [], pendingThumbs = [], ticked = new Set(), planKey = "";
 let spoken = "", spokenAt = 0, analyser = null, levelFrame = 0, timerEnd = 0, timerTick = null, thinkDelay = null, ackDelay = null;
+let talkedAt = 0, ackIndex = 0, lastHeard = "", threads = {}, threadStep = 0;
 
 function make(tag, className, text) {
   const node = document.createElement(tag);
@@ -602,7 +616,7 @@ async function request(url, body, messages) {
   clearTimeout(ackDelay);
   // Instant replies never flash the thinking screen or get an acknowledgement.
   if (messages) thinkDelay = setTimeout(() => startThinking(messages), 350);
-  if (url === "/api/turn" && !["stop", "start over"].includes(body.text)) ackDelay = setTimeout(() => speak("On it."), 700);
+  if (url === "/api/turn" && !["stop", "start over"].includes(body.text)) ackDelay = setTimeout(() => speak(ACKS[ackIndex++ % ACKS.length]), 900);
   try {
     const result = await (await post(url, body)).json();
     if (id !== requestId) return;
@@ -630,8 +644,12 @@ async function request(url, body, messages) {
 
 function send(text) {
   const urgent = text === "start over" || HAZARD.test(text);
-  if (busy && !urgent) return showToast("One moment, I'm still working on that.");
+  // During a task, a new command replaces whatever is still being answered, as it would with a person.
+  const canReplace = ["items", "gate", "steps"].includes(phase) && sheetMode !== "cam";
+  if (busy && !urgent && !canReplace) return showToast("One moment, I'm still working on that.");
   silence();
+  talkedAt = Date.now();
+  lastHeard = text;
   lastCommand = text.toLowerCase();
   if (!shopLoading && ["items", "gate", "steps"].includes(phase) && BUYING.test(text)) showShopLoading("Finding it");
   const longTask =!["stop", "start over", "camera"].includes(text) && ["idle", "caution", "done", "stopped", "ended"].includes(phase);
@@ -774,7 +792,6 @@ function paintSteps(r) {
   const changed = r.step !== lastStep;
   const backwards = r.step < lastStep;
   showScreen("steps");
-  $("scroll").scrollTop = 0;
   if (changed) {
     flip = !flip;
     $("stepCard").className = `stepcard slide-${backwards ? "back" : "next"}-${flip ? "b" : "a"}`;
@@ -793,14 +810,30 @@ function paintSteps(r) {
   $("stepButtons").hidden = asking;
   $("fixButtons").hidden = !asking;
   $("fixedNow").hidden = asking || !r.can_finish;
-  const extra = r.say && r.say !== r.screen && !r.shopping && !asking && sheetMode !== "cam" ? r.say : "";
-  $("stuck").hidden = !extra;
-  $("stuckText").textContent = extra;
-  $("stuckLabel").textContent = lastCommand === "stuck" ? "Try this" : "Korjaa";
+  const extra = r.say && !r.say.endsWith(r.screen) && !r.shopping && !asking && sheetMode !== "cam" ? r.say : "";
+  renderThread(r.step, extra);
   $("back").disabled = r.step === 1;
   $("next").textContent = r.step === r.total ? "Finish" : "Next";
   $("sourcesWrap").hidden = !r.sources.length;
   $("sources").replaceChildren(...r.sources.map(item => makeLink(item.title, item.url, "link")));
+}
+
+// Each step keeps its own conversation, so going back shows what was already said.
+function renderThread(step, reply) {
+  const entries = threads[step] || (threads[step] = []);
+  if (reply) {
+    entries.push({ you:lastHeard, say:reply });
+    if (entries.length > 8) entries.shift();
+    caption("");
+  }
+  $("thread").replaceChildren(...entries.flatMap(entry => {
+    const you = make("div", "bubble bubble--you");
+    you.append(make("span", "bubble-who", "You"), make("span", "", entry.you));
+    const say = make("div", "bubble");
+    say.append(make("span", "bubble-who", "Korjaa"), make("span", "", entry.say));
+    return [you, say];
+  }));
+  $("scroll").scrollTop = reply ? $("scroll").scrollHeight : 0;
 }
 
 function paintDone(r) {
@@ -944,7 +977,7 @@ async function speak(text) {
   }
   if (id !== speechId) return;
   speaking = false;
-  spokenAt = Date.now();
+  spokenAt = talkedAt = Date.now();
   startListening();
 }
 
@@ -997,8 +1030,12 @@ function heard(raw) {
   const words = text.split(/\s+/).length;
   const guided = ["steps", "gate", "items", "caution"].includes(phase);
   if (!hazard && !woke) {
-    if (speaking && !(words <= 6 && SHORT_COMMAND.test(text))) return;
-    if (guided && words > 6 && (!VOICE_QUESTION.test(text) || words > 16)) return;
+    // While it talks, only clear interruptions count, since it may be hearing itself or the room.
+    if (speaking && !((words <= 6 && SHORT_COMMAND.test(text)) || (words <= 16 && VOICE_QUESTION.test(text)))) return;
+    // Right after an exchange, anything said is the conversation. Later on, chatter needs its name or a question.
+    const inConversation = Date.now() - talkedAt < FOLLOW_UP_MS;
+    if (!speaking && guided && !inConversation && words > 6 && (!VOICE_QUESTION.test(text) || words > 16)) return;
+    if (words > 40) return;
   }
   caption(text);
   send(text);
@@ -1035,8 +1072,13 @@ function chime() {
   tone.stop(audioCtx.currentTime + 0.5);
 }
 
+function voiceUnavailable() {
+  showToast("I can't hear you here. Allow the microphone in Chrome, or use the buttons and typing.");
+  $("talkHint").textContent = "The microphone is off, so type your question.";
+}
+
 function setupVoice() {
-  if (!Recognition) return;
+  if (!Recognition) return voiceUnavailable();
   recognition = new Recognition();
   recognition.lang = "en-US";
   recognition.continuous = true;
@@ -1046,13 +1088,18 @@ function setupVoice() {
       const text = event.results[index][0].transcript.trim();
       if (!text) continue;
       if (event.results[index].isFinal) heard(text);
-      else if (!isEcho(text) && !speaking) caption(text);
+      else if (!isEcho(text)) {
+        // Cut the voice as soon as a clear command starts, rather than after the sentence ends.
+        if (speaking && text.split(/\s+/).length <= 4 && (SHORT_COMMAND.test(text) || /\bstop\b/i.test(text))) silence();
+        if (!speaking) caption(text);
+      }
     }
   };
   recognition.onerror = event => {
     if (["not-allowed", "service-not-allowed"].includes(event.error)) {
       listening = false;
       recognition = null;
+      voiceUnavailable();
       restVoice();
     }
   };
@@ -1170,6 +1217,7 @@ async function checkImage(image, run) {
 function newTask() {
   closeSheet();
   lastStep = 0;
+  threads = {};
   photoMode = false;
   thumbnails = [];
   pendingThumbs = [];
@@ -1201,6 +1249,11 @@ $("stop").onclick = () => {
 };
 $("voice").onclick = () => { if (speaking) silence(); };
 $("timer").onclick = () => setTimer(0);
+$("askStep").onclick = () => {
+  if ($("field").hidden) $("keyboard").click();
+  else $("text").focus();
+  $("text").placeholder = "Ask about this step";
+};
 $("newTask").onclick = newTask;
 $("overNew").onclick = newTask;
 $("goPhotos").onclick = () => {

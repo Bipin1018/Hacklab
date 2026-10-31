@@ -189,8 +189,12 @@ class CountingFinder:
                 "buying_steps": ["Open"], "checks": ["Fits"]}
 
 
-def at_step(reply="{}", finder=None):
-    engine = Engine(FakeModel(reply), fake_planner, finder or CountingFinder())
+async def no_search(query):
+    return []
+
+
+def at_step(reply="{}", finder=None, planner=None):
+    engine = Engine(FakeModel(reply), planner or fake_planner, finder or CountingFinder(), no_search)
     session = Session()
     asyncio.run(engine.turn(session, "make a sandwich"))
     asyncio.run(engine.turn(session, "ready"))
@@ -233,7 +237,157 @@ def test_question_gets_a_grounded_answer_and_keeps_the_step():
 
 def test_uncovered_question_does_not_improvise():
     engine, session = at_step('{"known":false,"text":"Try ten newton metres."}')
-    assert "doesn't cover" in asyncio.run(engine.turn(session, "what torque do I need"))["say"]
+    assert "rather not guess" in asyncio.run(engine.turn(session, "what torque do I need"))["say"]
+
+
+async def long_planner(model, request, seen="", images=None, product=""):
+    plan = await fake_planner(model, request)
+    return {**plan, "steps": [{"say": f"Step {i}", "detail": f"Detail {i}", "uses": []} for i in range(1, 6)]}
+
+
+@pytest.mark.parametrize("text", [
+    "next", "next please", "okay", "okay next", "alright", "yeah", "continue", "carry on", "keep going", "move on",
+    "done", "i'm done", "i've done that", "got it", "what's next", "what now", "and then", "skip this",
+])
+def test_natural_next_phrases_move_on(text):
+    engine, session = at_step(planner=long_planner)
+    result = asyncio.run(engine.turn(session, text))
+    assert result["step"] == 2
+    assert result["say"].endswith("Step 2")
+
+
+@pytest.mark.parametrize("text", [
+    "repeat", "again", "say that again", "one more time", "what was that", "sorry", "could you repeat that",
+    "i didn't catch that", "can you repeat that please",
+])
+def test_natural_repeat_phrases_keep_the_step(text):
+    engine, session = at_step(planner=long_planner)
+    result = asyncio.run(engine.turn(session, text))
+    assert result["step"] == 1
+    assert result["say"] == "Sure. Step 1"
+
+
+@pytest.mark.parametrize("text", ["back", "go back", "previous step", "okay go back", "last step"])
+def test_natural_back_phrases(text):
+    engine, session = at_step(planner=long_planner)
+    asyncio.run(engine.turn(session, "next"))
+    assert asyncio.run(engine.turn(session, text))["step"] == 1
+
+
+@pytest.mark.parametrize("text", [
+    "okay what about the hose", "right but which way does it turn", "the hose is stuck behind the panel",
+    "not next the other one", "okay so the filter won't come out",
+])
+def test_conversation_does_not_move_the_step(text):
+    engine, session = at_step('{"intent":"answer","known":true,"text":"Try turning it gently."}', planner=long_planner)
+    result = asyncio.run(engine.turn(session, text))
+    assert result["step"] == 1
+    assert result["say"] == "Try turning it gently."
+
+
+@pytest.mark.parametrize("text", [
+    "how far do I turn it", "where am I supposed to put this", "what do I need to do with the hose",
+    "what is this bolt for",
+])
+def test_questions_are_not_mistaken_for_quick_replies(text):
+    engine, session = at_step('{"intent":"answer","known":true,"text":"About a quarter turn."}', planner=long_planner)
+    result = asyncio.run(engine.turn(session, text))
+    assert result["say"] == "About a quarter turn."
+    assert result["action"] == ""
+
+
+def test_model_can_recognise_a_longer_next():
+    engine, session = at_step('{"intent":"next","known":true,"text":""}', planner=long_planner)
+    assert asyncio.run(engine.turn(session, "I've put all of that in place now"))["step"] == 2
+
+
+def test_model_invented_intent_is_ignored():
+    engine, session = at_step('{"intent":"finish_task","known":true,"text":"Sure."}', planner=long_planner)
+    result = asyncio.run(engine.turn(session, "tell me about the next bit"))
+    assert result["step"] == 1
+
+
+def test_jump_to_a_step():
+    engine, session = at_step(planner=long_planner)
+    assert asyncio.run(engine.turn(session, "go to step 4"))["step"] == 4
+    assert asyncio.run(engine.turn(session, "go back to step two"))["step"] == 2
+    assert "5 steps" in asyncio.run(engine.turn(session, "go to step 9"))["say"]
+
+
+def test_conversation_remembers_earlier_turns():
+    class Recording(FakeModel):
+        prompts = []
+
+        async def generate(self, prompt, images=None, json_mode=False):
+            self.prompts.append(prompt)
+            return '{"intent":"answer","known":true,"text":"Turn the left one."}'
+
+    engine = Engine(Recording(), long_planner, CountingFinder(), no_search)
+    session = Session()
+    asyncio.run(engine.turn(session, "make a sandwich"))
+    asyncio.run(engine.turn(session, "ready"))
+    asyncio.run(engine.turn(session, "which valve do I turn"))
+    asyncio.run(engine.turn(session, "and how far"))
+    assert "User: which valve do I turn\nKorjaa: Turn the left one." in Recording.prompts[-1]
+    assert session.step == 0
+
+
+def test_uncovered_question_uses_a_web_search():
+    class TwoReplies(FakeModel):
+        replies = ['{"intent":"answer","known":false,"text":""}', '{"known":true,"text":"An impeller is a small spinning wheel."}']
+
+        async def generate(self, prompt, images=None, json_mode=False):
+            return self.replies.pop(0)
+
+    async def search(query):
+        return [{"title": "T", "url": "https://example.com", "text": "An impeller spins."}]
+
+    engine = Engine(TwoReplies(), long_planner, CountingFinder(), search)
+    session = Session()
+    asyncio.run(engine.turn(session, "make a sandwich"))
+    asyncio.run(engine.turn(session, "ready"))
+    assert "spinning wheel" in asyncio.run(engine.turn(session, "what is an impeller"))["say"]
+
+
+def test_late_answer_cannot_move_the_step():
+    async def run():
+        release = asyncio.Event()
+
+        class Slow(FakeModel):
+            async def generate(self, prompt, images=None, json_mode=False):
+                await release.wait()
+                return '{"intent":"next","known":true,"text":""}'
+
+        engine, session = Engine(Slow(), long_planner, CountingFinder(), no_search), Session()
+        await engine.turn(session, "make a sandwich")
+        await engine.turn(session, "ready")
+        slow = asyncio.create_task(engine.turn(session, "which part comes first here"))
+        await asyncio.sleep(0)
+        await engine.turn(session, "next")
+        release.set()
+        await slow
+        return session.step
+
+    assert asyncio.run(run()) == 1
+
+
+@pytest.mark.parametrize("text", ["i'm not ready", "not yet", "wait"])
+def test_not_ready_never_passes_the_safety_gate(text):
+    session = Session()
+    turn(session, "make a sandwich")
+    assert turn(session, text)["phase"] == "gate"
+
+
+def test_model_intent_never_passes_the_safety_gate():
+    engine = Engine(FakeModel('{"intent":"next","known":true,"text":"Let us start."}'), fake_planner, CountingFinder(), no_search)
+    session = Session()
+    asyncio.run(engine.turn(session, "make a sandwich"))
+    assert asyncio.run(engine.turn(session, "tell me a bit more about this"))["phase"] == "gate"
+
+
+def test_busy_model_is_explained_mid_task():
+    engine, session = at_step("{}")
+    assert "trouble answering" in asyncio.run(engine.turn(session, "which way does it turn"))["say"]
 
 
 def test_answer_cannot_claim_something_is_safe():
