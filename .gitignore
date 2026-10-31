@@ -1,0 +1,8 @@
+# Local secrets written by `elevenlabs onboard`
+/.env
+
+.venv/
+__pycache__/
+.pytest_cache/
+.vscode/
+cache/
